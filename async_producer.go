@@ -12,8 +12,13 @@ import (
 type AsyncProducer interface {
 	// Produce sends message to broker. Returns immediately.
 	Produce(data []byte)
+	// Publish sends message to broker using the given routing key.  Returns immediately.
+	Publish(route string, message []byte)
 }
-
+type asyncProducerMessage struct {
+	data       []byte
+	routingKey string
+}
 type asyncProducer struct {
 	sync.Mutex // Protect channel during posting and reconnect.
 	workerStatus
@@ -22,7 +27,7 @@ type asyncProducer struct {
 	errorChannel    chan<- error
 	exchange        string
 	options         wabbit.Option
-	publishChannel  chan []byte
+	publishChannel  chan *asyncProducerMessage
 	routingKey      string
 	shutdownChannel chan chan struct{}
 }
@@ -33,7 +38,7 @@ func newAsyncProducer(channel wabbit.Channel, errorChannel chan<- error, config 
 		errorChannel:    errorChannel,
 		exchange:        config.Exchange,
 		options:         wabbit.Option(config.Options),
-		publishChannel:  make(chan []byte, config.BufferSize),
+		publishChannel:  make(chan *asyncProducerMessage, config.BufferSize),
 		routingKey:      config.RoutingKey,
 		shutdownChannel: make(chan chan struct{}),
 	}
@@ -81,14 +86,24 @@ func (producer *asyncProducer) closeChannel() {
 }
 
 func (producer *asyncProducer) Produce(message []byte) {
-	producer.publishChannel <- message
+	producer.publishChannel <- &asyncProducerMessage{
+		data:       message,
+		routingKey: producer.routingKey,
+	}
 }
 
-func (producer *asyncProducer) produce(message []byte) error {
+func (producer *asyncProducer) produce(message *asyncProducerMessage) error {
 	producer.Lock()
 	defer producer.Unlock()
 
-	return producer.channel.Publish(producer.exchange, producer.routingKey, message, producer.options)
+	return producer.channel.Publish(producer.exchange, message.routingKey, message.data, producer.options)
+}
+
+func (producer *asyncProducer) Publish(route string, message []byte) {
+	producer.publishChannel <- &asyncProducerMessage{
+		data:       message,
+		routingKey: route,
+	}
 }
 
 // Stops the worker if it is running.

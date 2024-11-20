@@ -1,9 +1,9 @@
 package mq
 
 import (
-	"sync"
-
 	"github.com/NeowayLabs/wabbit"
+	wabbitamqp "github.com/NeowayLabs/wabbit/amqp"
+	"sync"
 )
 
 // Consumer describes available methods for consumer.
@@ -22,6 +22,15 @@ type Message interface {
 	Nack(multiple, requeue bool) error
 	Reject(requeue bool) error
 	Body() []byte
+	RoutingKey() string
+}
+
+type delivery struct {
+	*wabbitamqp.Delivery
+}
+
+func (d *delivery) RoutingKey() string {
+	return d.Delivery.RoutingKey
 }
 
 type consumer struct {
@@ -102,8 +111,9 @@ func (worker *worker) Run(handler ConsumerHandler) {
 				// Somebody is already trying to stop the worker.
 				continue
 			}
-
-			handler(message)
+			d := new(delivery)
+			d.Delivery, _ = message.(*wabbitamqp.Delivery)
+			handler(d)
 		case done := <-worker.shutdownChannel:
 			worker.closeChannel()
 			close(done)
